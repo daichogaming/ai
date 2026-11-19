@@ -1,47 +1,182 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
-<meta charset="utf-8"><title>Support Chat</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hanvico - Tư vấn trực tuyến</title>
 <style>
-  body { font-family: sans-serif; max-width: 480px; margin: 40px auto; }
-  #log { border: 1px solid #ccc; height: 360px; overflow-y: auto; padding: 10px; margin-bottom: 8px; }
-  .user { text-align: right; color: #0a58ca; } .bot { color: #222; }
-  #in { width: 75%; padding: 8px; } button { padding: 8px 14px; }
+  :root {
+    --blue: #1e6fd9;
+    --blue-dark: #1558b0;
+    --blue-soft: #eaf2fd;
+    --text: #1c2733;
+    --muted: #7b8794;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #fff;
+    color: var(--text);
+    display: flex; justify-content: center; align-items: center;
+  }
+  .chat {
+    width: 100%; max-width: 440px; height: 100dvh; max-height: 760px;
+    display: flex; flex-direction: column; background: #fff;
+    border: 1px solid #e3ebf5; border-radius: 20px; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(30, 111, 217, .12);
+  }
+  @media (max-width: 480px) {
+    .chat { max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+  }
+
+  /* header */
+  .head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+    background: #fff; border-bottom: 1px solid #e3ebf5;
+  }
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%; flex: none;
+    background: linear-gradient(135deg, #4a9bff, var(--blue-dark));
+    color: #fff; font-weight: 700; font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .head .name { font-weight: 600; font-size: 16px; line-height: 1.2; }
+  .head .status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3ccf6e; }
+
+  /* messages */
+  #log {
+    flex: 1; overflow-y: auto; padding: 18px 14px 8px;
+    display: flex; flex-direction: column; gap: 6px; background: #fff;
+  }
+  .row { display: flex; align-items: flex-end; gap: 8px; }
+  .row.user { justify-content: flex-end; }
+  .mini {
+    width: 28px; height: 28px; border-radius: 50%; flex: none; font-size: 12px;
+    background: linear-gradient(135deg, #4a9bff, var(--blue-dark)); color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .bubble {
+    max-width: 76%; padding: 10px 15px; font-size: 15px; line-height: 1.42;
+    white-space: pre-wrap; word-wrap: break-word; animation: pop .18s ease-out;
+  }
+  .bot .bubble { background: var(--blue-soft); color: var(--text); border-radius: 20px 20px 20px 6px; }
+  .user .bubble { background: linear-gradient(135deg, #3b8cf0, var(--blue-dark)); color: #fff; border-radius: 20px 20px 6px 20px; }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
+
+  /* typing indicator */
+  .typing { display: flex; gap: 4px; padding: 14px 16px; background: var(--blue-soft); border-radius: 20px 20px 20px 6px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: #8fb4e8; animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+  /* input bar */
+  .bar { padding: 10px 14px 14px; background: #fff; }
+  .pill {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 18px;
+    border: 1px solid #cfdcee; border-radius: 28px; background: #fff;
+  }
+  .pill:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(30, 111, 217, .12); }
+  #in { flex: 1; border: 0; outline: 0; font-size: 15px; padding: 8px 0; background: transparent; color: var(--text); }
+  #send {
+    border: 0; background: transparent; color: var(--blue); font-weight: 600; font-size: 15px;
+    padding: 8px 12px; cursor: pointer; border-radius: 20px;
+  }
+  #send:disabled { color: #b7c4d6; cursor: default; }
+  #send:not(:disabled):hover { background: var(--blue-soft); }
 </style>
 </head>
 <body>
-<div id="log"></div>
-<input id="in" placeholder="Type your question..." onkeydown="if(event.key==='Enter')send()">
-<button onclick="send()">Send</button>
+<div class="chat">
+  <div class="head">
+    <div class="avatar">H</div>
+    <div>
+      <div class="name">Hanvico Support</div>
+      <div class="status"><span class="dot"></span> Đang hoạt động</div>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <div class="bar">
+    <div class="pill">
+      <input id="in" placeholder="Nhắn tin..." autocomplete="off">
+      <button id="send" disabled>Gửi</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const API = "https://api.mrnoobyesyes.workers.dev"; // change to your deployed URL later
+const API = "https://api.mrnoobyesyes.workers.dev"; // keep the same URL you had before
 const history = [];
 const log = document.getElementById("log");
 const input = document.getElementById("in");
+const sendBtn = document.getElementById("send");
+let busy = false;
 
-function add(cls, text) {
-  const p = document.createElement("p");
-  p.className = cls; p.textContent = text;
-  log.appendChild(p); log.scrollTop = log.scrollHeight;
+function addRow(who, text) {
+  const row = document.createElement("div");
+  row.className = "row " + who;
+  if (who === "bot") {
+    const m = document.createElement("div");
+    m.className = "mini"; m.textContent = "H";
+    row.appendChild(m);
+  }
+  const b = document.createElement("div");
+  b.className = "bubble"; b.textContent = text;
+  row.appendChild(b);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+  return row;
 }
+
+function showTyping() {
+  const row = document.createElement("div");
+  row.className = "row bot";
+  row.innerHTML = '<div class="mini">H</div><div class="typing"><span></span><span></span><span></span></div>';
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+  return row;
+}
+
+function refreshBtn() { sendBtn.disabled = busy || !input.value.trim(); }
 
 async function send() {
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || busy) return;
   input.value = "";
-  add("user", text);
+  busy = true; refreshBtn();
+  addRow("user", text);
   history.push({ role: "user", content: text });
+  const typing = showTyping();
   try {
-    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: history }) });
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history })
+    });
     const data = await r.json();
     const reply = data.choices[0].message.content;
     history.push({ role: "assistant", content: reply });
-    add("bot", reply);
+    typing.remove();
+    addRow("bot", reply);
   } catch (e) {
     console.error(e);
-    add("bot", "Sorry, something went wrong. Please try again.");
+    typing.remove();
+    addRow("bot", "Xin lỗi, đã có lỗi xảy ra. Bạn vui lòng thử lại nhé.");
+    history.pop();
   }
+  busy = false; refreshBtn(); input.focus();
 }
+
+input.addEventListener("input", refreshBtn);
+input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+sendBtn.addEventListener("click", send);
+
+addRow("bot", "Xin chào! Hanvico ấm áp như lòng mẹ 💙 Mình có thể giúp gì cho bạn hôm nay?");
+input.focus();
 </script>
 </body>
 </html>
