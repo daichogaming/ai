@@ -2,9 +2,20 @@ import KNOWLEDGE from "./knowledge.txt";
 import DOC from "./knowledge3.txt";
 import CATALOG from "./catalog.txt";
 
+// ===== CẤU HÌNH =====
+// Chỉ các trang này được gọi chatbot (thêm tên miền riêng của bạn nếu có)
+const ALLOWED_ORIGINS = [
+  "https://daichogaming.github.io",
+  "http://127.0.0.1:5500", // Live Server khi test trên máy
+  "http://localhost:5500",
+];
+// Hotline / Zalo / email để bot đưa cho khách khi cần gặp nhân viên. Để trống nếu chưa có.
+const CONTACT = "";
+
 const BASE_PROMPT = `Bạn là trợ lý chăm sóc khách hàng thân thiện của Hanvico (chăn ga gối đệm).
 Chỉ trả lời dựa trên thông tin công ty bên dưới. Trả lời ngắn gọn, rõ ràng, bằng tiếng Việt; nếu khách viết tiếng Anh thì trả lời bằng tiếng Anh.
-Nếu thông tin không có, hãy nói bạn chưa có thông tin đó và mời khách liên hệ nhân viên Hanvico.
+Chỉ viết văn bản thuần: không dùng Markdown (không **, không #, không bảng |). Muốn liệt kê thì mỗi ý một dòng, bắt đầu bằng dấu "-".
+Nếu thông tin không có, hãy nói bạn chưa có thông tin đó và mời khách liên hệ nhân viên Hanvico.${CONTACT ? "\nKhi khách cần gặp nhân viên hoặc muốn mua hàng, hướng dẫn khách liên hệ: " + CONTACT : ""}
 Không bịa giá, tính năng hay chính sách. Giá là giá niêm yết; không tự giảm giá hay hứa quà tặng, hãy mời khách liên hệ để biết ưu đãi hiện hành.
 Không nói đệm chữa được bệnh; chỉ nói hỗ trợ nâng đỡ và khuyên hỏi bác sĩ khi có bệnh lý.
 Khi báo giá, nêu rõ tên sản phẩm, kích thước và giá.
@@ -16,7 +27,6 @@ ${KNOWLEDGE}`;
 function norm(s) {
   return s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d");
 }
-
 function tokens(s) {
   const w = norm(s).match(/[\p{L}\p{N}]+/gu) || [];
   const out = [...w];
@@ -35,8 +45,7 @@ function expandQuery(q) {
   return q + extra;
 }
 
-// ---- split text into chunks (~180 words each) ----
-// sep = how to split into blocks: blank lines for the document, one row per line for the catalog
+// ---- split text into chunks ----
 function makeChunks(text, maxWords = 180, sep = /\n\s*\n/) {
   const paras = text.split(sep).map(p => p.trim()).filter(Boolean);
   const pieces = [];
@@ -57,7 +66,6 @@ function makeChunks(text, maxWords = 180, sep = /\n\s*\n/) {
   return chunks;
 }
 
-// the catalog is smaller chunks (~90 words) so a price question gets the right rows, not a whole page
 const CHUNKS = [...makeChunks(DOC), ...makeChunks(CATALOG, 90, /\n+/)];
 const CHUNK_TOKENS = CHUNKS.map(c => new Set(tokens(c)));
 const DF = new Map();
@@ -78,21 +86,53 @@ function search(query, k = 6) {
     .map(s => CHUNKS[s.i]);
 }
 
+// remove leftover Markdown so the chat shows clean text
+const clean = t => t
+  .replace(/\*\*(.+?)\*\*/gs, "$1")
+  .replace(/^#{1,6}\s*/gm, "")
+  .replace(/^\s*\|?[-:| ]{3,}\|?\s*$/gm, "")
+  .trim();
+
+function corsHeaders(origin) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
+function json(obj, status, origin) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { ...(origin ? corsHeaders(origin) : {}), "Content-Type": "application/json" },
+  });
+}
+
 export default {
   async fetch(req, env) {
-    const cors = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-    };
-    if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-    if (req.method !== "POST") return new Response("POST only", { status: 405, headers: cors });
+    const origin = req.headers.get("Origin") || "";
+    const originOk = ALLOWED_ORIGINS.includes(origin);
 
-    const { messages } = await req.json();
-    const safe = (messages || []).slice(-10).map(m => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: String(m.content).slice(0, 1000),
-    }));
+    if (req.method === "OPTIONS") {
+      return originOk ? new Response(null, { headers: corsHeaders(origin) }) : new Response(null, { status: 403 });
+    }
+    if (req.method !== "POST") return new Response("POST only", { status: 405 });
+    if (!originOk) return json({ error: "forbidden" }, 403, null);
+
+    // optional per-visitor limit (needs the "ratelimits" binding in wrangler.jsonc)
+    if (env.RATE_LIMITER) {
+      const ip = req.headers.get("CF-Connecting-IP") || "unknown";
+      const { success } = await env.RATE_LIMITER.limit({ key: ip });
+      if (!success) return json({ error: "rate_limited" }, 429, origin);
+    }
+
+    let body;
+    try { body = await req.json(); } catch { return json({ error: "bad_request" }, 400, origin); }
+    const safe = (Array.isArray(body?.messages) ? body.messages : [])
+      .filter(m => m && typeof m.content === "string" && m.content.trim())
+      .slice(-10)
+      .map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content.slice(0, 1000) }));
+    if (!safe.length || safe[safe.length - 1].role !== "user") return json({ error: "bad_request" }, 400, origin);
 
     // find the chunks that match the customer's last 2 questions
     const query = safe.filter(m => m.role === "user").slice(-2).map(m => m.content).join(" ");
@@ -101,14 +141,28 @@ export default {
       ? "\n\nTHÔNG TIN LIÊN QUAN (tài liệu và bảng giá):\n" + found.join("\n---\n")
       : "";
 
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_KEY}` },
-      body: JSON.stringify({
-        model: "openai/gpt-oss-120b",
-        messages: [{ role: "system", content: BASE_PROMPT + docPart }, ...safe],
-      }),
-    });
-    return new Response(await r.text(), { headers: { ...cors, "Content-Type": "application/json" } });
+    let r;
+    try {
+      r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_KEY}` },
+        body: JSON.stringify({
+          model: "openai/gpt-oss-120b",
+          messages: [{ role: "system", content: BASE_PROMPT + docPart }, ...safe],
+        }),
+        signal: AbortSignal.timeout(25000),
+      });
+    } catch (e) {
+      console.error("groq request failed:", e);
+      return json({ error: "upstream_timeout" }, 504, origin);
+    }
+    if (!r.ok) {
+      console.error("groq error", r.status, (await r.text()).slice(0, 300));
+      return json({ error: "upstream_error" }, r.status === 429 ? 429 : 502, origin);
+    }
+    const data = await r.json();
+    const reply = clean(data?.choices?.[0]?.message?.content || "");
+    if (!reply) return json({ error: "empty_reply" }, 502, origin);
+    return json({ reply }, 200, origin);
   },
 };
